@@ -1,6 +1,7 @@
 #ifndef MONTADOR_H
 #define MONTADOR_H
 
-int montar_arquivo(const char *input_file, const char *output_file);
+// Função principal que monta o arquivo de entrada e gera a saída
+int montar_arquivo(const char *arquivo_entrada, const char *arquivo_saida);
 
-#endif // MONTADOR_H 
+#endif // MONTADOR_H

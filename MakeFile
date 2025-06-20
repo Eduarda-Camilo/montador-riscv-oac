@@ -13,4 +13,4 @@ montador.o: montador.c montador.h
 	$(CC) $(CFLAGS) -c montador.c
 
 clean:
-	rm -f *.o montador 
+	rm -f *.o montador

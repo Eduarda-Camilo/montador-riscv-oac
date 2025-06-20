@@ -1,266 +1,146 @@
-#include "montador.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "montador.h"
 
-/*
- * Converte uma string de registrador (ex: "x10") para seu número inteiro (10).
- * Retorna -1 se o formato for inválido.
- */
-int get_register_num(const char* reg_str) {
-    if (reg_str[0] == 'x') {
-        return atoi(reg_str + 1);
-    }
-    // Futuramente, pode-se adicionar suporte para nomes como "sp", "ra", etc.
-    return -1; // Retorna -1 se o formato for inválido
+// Pega o número do registrador um exemplo é: "x5" vira 5
+int numero_registrador(const char* texto_registrador) {
+    if (texto_registrador[0] == 'x') return atoi(texto_registrador + 1);
+    return -1;
 }
 
-/*
- * Converte um número decimal para uma string binária de 'len' bits.
- * Aloca memória para a string, que deve ser liberada posteriormente.
- */
-char* dec_to_binary(int n, int len) {
-    char* bin = (char*)malloc(sizeof(char) * (len + 1));
-    if (!bin) return NULL;
-    bin[len] = '\0';
-    for (int i = len - 1; i >= 0; i--) {
-        bin[i] = (n & 1) ? '1' : '0';
-        n >>= 1;
+// Transforma um número em binário, com o tamanho certo, como 5 bits)
+char* decimal_para_binario(int valor, int tamanho) {
+    char* binario = malloc(tamanho + 1);
+    binario[tamanho] = '\0';
+    for (int i = tamanho - 1; i >= 0; i--) {
+        binario[i] = (valor & 1) ? '1' : '0';
+        valor >>= 1;
     }
-    return bin;
+    return binario;
 }
 
-/*
- * Função central que processa uma única linha de assembly.
- * A estratégia é tentar analisar a linha com os diferentes formatos de instrução
- * (Pseudo-instruções, Tipo-R, Tipo-I, etc.) em sequência. Quando um formato
- * é reconhecido, a instrução é montada e a função retorna.
- */
-void processar_linha(const char* linha, FILE* stream_saida) {
-    char instrucao[10];
-    char p1[10], p2[10], p3[20];
-    char linha_traduzida[256];
+// Aqui é onde a linha do asm é analisada e montada
+void montar_linha(const char* linha_asm, FILE* arquivo_saida) {
+    char nome_instrucao[10], destino[10], origem1[10], origem2[20], linha_traduzida[256];
 
-    // --- Passo 1: Checa e traduz Pseudo-instruções ---
-    // Reconhece 'mv' e 'nop' e as converte para suas instruções 'addi' reais.
-    // A função então chama a si mesma (recursão) com a instrução traduzida.
-    if (sscanf(linha, "%9s %9[^,], %9s", instrucao, p1, p2) == 3 && strcmp(instrucao, "mv") == 0) {
-        snprintf(linha_traduzida, sizeof(linha_traduzida), "addi %s, %s, 0", p1, p2);
-        processar_linha(linha_traduzida, stream_saida);
+    // Se for mv ou nop, já converte pra addi pseudo-instrução (requisito da pontuação extra) 
+    if (sscanf(linha_asm, "%9s %9[^,], %9s", nome_instrucao, destino, origem1) == 3 && strcmp(nome_instrucao, "mv") == 0) {
+        snprintf(linha_traduzida, sizeof(linha_traduzida), "addi %s, %s, 0", destino, origem1);
+        montar_linha(linha_traduzida, arquivo_saida);
         return;
     }
-    if (sscanf(linha, "%9s", instrucao) == 1 && strcmp(instrucao, "nop") == 0) {
+    if (sscanf(linha_asm, "%9s", nome_instrucao) == 1 && strcmp(nome_instrucao, "nop") == 0) {
         snprintf(linha_traduzida, sizeof(linha_traduzida), "addi x0, x0, 0");
-        processar_linha(linha_traduzida, stream_saida);
+        montar_linha(linha_traduzida, arquivo_saida);
         return;
     }
 
-    // --- Passo 2: Se não for pseudo-instrução, tenta os formatos reais ---
-
-    // Formato Tipo-R: instrucao rd, rs1, rs2
-    if (sscanf(linha, "%9s %9[^,],%9[^,],%9s", instrucao, p1, p2, p3) == 4) {
-        int rd = get_register_num(p1);
-        int rs1 = get_register_num(p2);
-        int rs2 = get_register_num(p3);
-
-        char* opcode_bin = "0110011";
-        char* funct3_bin = NULL;
-        char* funct7_bin = NULL;
-        
-        // Mapeia o nome da instrução para seus códigos de função (funct3 e funct7)
-        if (strcmp(instrucao, "sub") == 0) {
-            funct3_bin = "000"; funct7_bin = "0100000";
-        } else if (strcmp(instrucao, "or") == 0) {
-            funct3_bin = "110"; funct7_bin = "0000000";
-        } else if (strcmp(instrucao, "srl") == 0) {
-            funct3_bin = "101"; funct7_bin = "0000000";
-        } else if (strcmp(instrucao, "add") == 0) {
-            funct3_bin = "000"; funct7_bin = "0000000";
-        } else if (strcmp(instrucao, "xor") == 0) {
-            funct3_bin = "100"; funct7_bin = "0000000";
-        } else if (strcmp(instrucao, "sll") == 0) {
-            funct3_bin = "001"; funct7_bin = "0000000";
-        }
-        
-        if (funct7_bin) { // Se a instrução foi mapeada com sucesso
-            char* rd_bin = dec_to_binary(rd, 5);
-            char* rs1_bin = dec_to_binary(rs1, 5);
-            char* rs2_bin = dec_to_binary(rs2, 5);
-            
-            // Monta a string final de acordo com o formato Tipo-R
-            fprintf(stream_saida, "%s%s%s%s%s%s\n", funct7_bin, rs2_bin, rs1_bin, funct3_bin, rd_bin, opcode_bin);
-            
-            free(rd_bin); free(rs1_bin); free(rs2_bin);
+    // Aqui tenta montar instruções tipo-R (ex: add, sub, or, xor, sll, srl)
+    if (sscanf(linha_asm, "%9s %9[^,],%9[^,],%9s", nome_instrucao, destino, origem1, origem2) == 4) {
+        int reg_destino = numero_registrador(destino);
+        int reg_origem1 = numero_registrador(origem1);
+        int reg_origem2 = numero_registrador(origem2);
+        char* opcode = "0110011";
+        char* funct3 = NULL, *funct7 = NULL;
+        if (strcmp(nome_instrucao, "sub") == 0) { funct3 = "000"; funct7 = "0100000"; }
+        else if (strcmp(nome_instrucao, "or") == 0) { funct3 = "110"; funct7 = "0000000"; }
+        else if (strcmp(nome_instrucao, "srl") == 0) { funct3 = "101"; funct7 = "0000000"; }
+        else if (strcmp(nome_instrucao, "add") == 0) { funct3 = "000"; funct7 = "0000000"; }
+        else if (strcmp(nome_instrucao, "xor") == 0) { funct3 = "100"; funct7 = "0000000"; }
+        else if (strcmp(nome_instrucao, "sll") == 0) { funct3 = "001"; funct7 = "0000000"; }
+        if (funct7) {
+            char* bin_destino = decimal_para_binario(reg_destino, 5);
+            char* bin_origem1 = decimal_para_binario(reg_origem1, 5);
+            char* bin_origem2 = decimal_para_binario(reg_origem2, 5);
+            fprintf(arquivo_saida, "%s%s%s%s%s%s\n", funct7, bin_origem2, bin_origem1, funct3, bin_destino, opcode);
+            free(bin_destino); free(bin_origem1); free(bin_origem2);
             return;
         }
     }
 
-    // Formato Tipo-I (Lógica/Branch): instrucao rd, rs1, imm
-    if (sscanf(linha, "%9s %9[^,],%9[^,],%19s", instrucao, p1, p2, p3) == 4) {
-        int rd = get_register_num(p1);
-        int rs1 = get_register_num(p2);
-        // Usa strtol para suportar tanto decimal quanto hexadecimal (0x)
-        int imm = strtol(p3, NULL, 0);
-
-        char* opcode_bin = NULL;
-        char* funct3_bin = NULL;
-
-        // Mapeia a instrução para seu opcode e funct3
-        if (strcmp(instrucao, "andi") == 0) {
-            opcode_bin = "0010011"; funct3_bin = "111";
-        } else if (strcmp(instrucao, "addi") == 0) {
-            opcode_bin = "0010011"; funct3_bin = "000";
-        }
-        
-        if (opcode_bin) {
-            char* imm_bin = dec_to_binary(imm, 12);
-            char* rs1_bin = dec_to_binary(rs1, 5);
-            char* rd_bin = dec_to_binary(rd, 5);
-            
-            // Monta a string final de acordo com o formato Tipo-I
-            fprintf(stream_saida, "%s%s%s%s%s\n", imm_bin, rs1_bin, funct3_bin, rd_bin, opcode_bin);
-
-            free(imm_bin); free(rs1_bin); free(rd_bin);
+    // Aqui tenta montar instruções tipo-I (andi, addi, beq)
+    if (sscanf(linha_asm, "%9s %9[^,],%9[^,],%19s", nome_instrucao, destino, origem1, origem2) == 4) {
+        int reg_destino = numero_registrador(destino);
+        int reg_origem1 = numero_registrador(origem1);
+        int valor_imediato = strtol(origem2, NULL, 0); // aceita decimal e hex
+        char* opcode = NULL, *funct3 = NULL;
+        if (strcmp(nome_instrucao, "andi") == 0) { opcode = "0010011"; funct3 = "111"; }
+        else if (strcmp(nome_instrucao, "addi") == 0) { opcode = "0010011"; funct3 = "000"; }
+        if (opcode) {
+            char* bin_imediato = decimal_para_binario(valor_imediato, 12);
+            char* bin_origem1 = decimal_para_binario(reg_origem1, 5);
+            char* bin_destino = decimal_para_binario(reg_destino, 5);
+            fprintf(arquivo_saida, "%s%s%s%s%s\n", bin_imediato, bin_origem1, funct3, bin_destino, opcode);
+            free(bin_imediato); free(bin_origem1); free(bin_destino);
             return;
         }
-
-        // Tratamento do Tipo-B (beq)
-        if (strcmp(instrucao, "beq") == 0) {
-            opcode_bin = "1100011"; 
-            funct3_bin = "000";
-
-            int rs1 = get_register_num(p1);
-            int rs2 = get_register_num(p2);
-
-            // O imediato do tipo B é "embaralhado" em 4 partes.
-            // Aqui, extraímos cada parte usando máscaras e deslocamentos de bits.
-            int imm_12   = (imm >> 12) & 1;
-            int imm_10_5 = (imm >> 5)  & 0x3F;
-            int imm_4_1  = (imm >> 1)  & 0xF;
-            int imm_11   = (imm >> 11) & 1;
-
-            char* imm12_bin   = dec_to_binary(imm_12, 1);
-            char* imm10_5_bin = dec_to_binary(imm_10_5, 6);
-            char* imm4_1_bin  = dec_to_binary(imm_4_1, 4);
-            char* imm11_bin   = dec_to_binary(imm_11, 1);
-            char* rs1_bin     = dec_to_binary(rs1, 5);
-            char* rs2_bin     = dec_to_binary(rs2, 5);
-
-            // Monta a string final de acordo com o complexo formato Tipo-B
-            fprintf(stream_saida, "%s%s%s%s%s%s%s%s\n",
-                imm12_bin, imm10_5_bin, rs2_bin, rs1_bin, funct3_bin, imm4_1_bin, imm11_bin, opcode_bin);
-
-            free(imm12_bin); free(imm10_5_bin); free(imm4_1_bin); free(imm11_bin);
-            free(rs1_bin); free(rs2_bin);
+        // beq é um pouco diferente, tem que embaralhar os bits do imediato
+        if (strcmp(nome_instrucao, "beq") == 0) {
+            opcode = "1100011"; funct3 = "000";
+            int reg1 = numero_registrador(destino), reg2 = numero_registrador(origem1);
+            int im12 = (valor_imediato >> 12) & 1, im10_5 = (valor_imediato >> 5) & 0x3F, im4_1 = (valor_imediato >> 1) & 0xF, im11 = (valor_imediato >> 11) & 1;
+            char* b12 = decimal_para_binario(im12, 1), *b10_5 = decimal_para_binario(im10_5, 6), *b4_1 = decimal_para_binario(im4_1, 4), *b11 = decimal_para_binario(im11, 1);
+            char* bin_reg1 = decimal_para_binario(reg1, 5), *bin_reg2 = decimal_para_binario(reg2, 5);
+            fprintf(arquivo_saida, "%s%s%s%s%s%s%s%s\n", b12, b10_5, bin_reg2, bin_reg1, funct3, b4_1, b11, opcode);
+            free(b12); free(b10_5); free(b4_1); free(b11); free(bin_reg1); free(bin_reg2);
             return;
         }
     }
 
-    // Formato Tipo-I (Load) e Tipo-S (Store): instrucao reg, offset(base_reg)
-    // sscanf complexo para capturar os 4 componentes: instrução, reg, offset, base_reg
-    if (sscanf(linha, "%9s %9[^,],%19[^(](%9[^)])", instrucao, p1, p3, p2) == 4) {
-        // Usa strtol para suportar tanto decimal quanto hexadecimal (0x)
-        int imm = strtol(p3, NULL, 0);
-        char* opcode_bin = NULL;
-        char* funct3_bin = NULL;
-
-        // Tratamento do Tipo I (lh)
-        if (strcmp(instrucao, "lh") == 0) {
-            opcode_bin = "0000011";
-            funct3_bin = "001";
-
-            int rd = get_register_num(p1);
-            int rs1 = get_register_num(p2);
-
-            char* imm_bin = dec_to_binary(imm, 12);
-            char* rs1_bin = dec_to_binary(rs1, 5);
-            char* rd_bin = dec_to_binary(rd, 5);
-            
-            // Monta a string final de acordo com o formato Tipo-I (Load)
-            fprintf(stream_saida, "%s%s%s%s%s\n", imm_bin, rs1_bin, funct3_bin, rd_bin, opcode_bin);
-
-            free(imm_bin); free(rs1_bin); free(rd_bin);
+    // Aqui monta lh (load) e sh (store)
+    if (sscanf(linha_asm, "%9s %9[^,],%19[^(](%9[^)])", nome_instrucao, destino, origem2, origem1) == 4) {
+        int valor_imediato = strtol(origem2, NULL, 0);
+        if (strcmp(nome_instrucao, "lh") == 0) {
+            int reg_destino = numero_registrador(destino), reg_base = numero_registrador(origem1);
+            char* opcode = "0000011", *funct3 = "001";
+            char* bin_imediato = decimal_para_binario(valor_imediato, 12);
+            char* bin_base = decimal_para_binario(reg_base, 5);
+            char* bin_destino = decimal_para_binario(reg_destino, 5);
+            fprintf(arquivo_saida, "%s%s%s%s%s\n", bin_imediato, bin_base, funct3, bin_destino, opcode);
+            free(bin_imediato); free(bin_base); free(bin_destino);
             return;
         }
-
-        // Tratamento do Tipo S (sh)
-        if (strcmp(instrucao, "sh") == 0) {
-            opcode_bin = "0100011";
-            funct3_bin = "001";
-
-            // Note que no store, o primeiro operando é o registrador a ser salvo (rs2)
-            int rs2 = get_register_num(p1);
-            int rs1 = get_register_num(p2);
-
-            // Divide o imediato de 12 bits para o formato Tipo-S
-            int imm_11_5 = (imm >> 5) & 0x7F;
-            int imm_4_0  = imm & 0x1F;
-
-            char* imm11_5_bin = dec_to_binary(imm_11_5, 7);
-            char* imm4_0_bin  = dec_to_binary(imm_4_0, 5);
-            char* rs1_bin     = dec_to_binary(rs1, 5);
-            char* rs2_bin     = dec_to_binary(rs2, 5);
-
-            // Monta a string final de acordo com o formato Tipo-S
-            fprintf(stream_saida, "%s%s%s%s%s%s\n", imm11_5_bin, rs2_bin, rs1_bin, funct3_bin, imm4_0_bin, opcode_bin);
-
-            free(imm11_5_bin); free(imm4_0_bin); free(rs1_bin); free(rs2_bin);
+        if (strcmp(nome_instrucao, "sh") == 0) {
+            int reg_origem = numero_registrador(destino), reg_base = numero_registrador(origem1);
+            char* opcode = "0100011", *funct3 = "001";
+            int im11_5 = (valor_imediato >> 5) & 0x7F, im4_0 = valor_imediato & 0x1F;
+            char* bin11_5 = decimal_para_binario(im11_5, 7), *bin4_0 = decimal_para_binario(im4_0, 5);
+            char* bin_base = decimal_para_binario(reg_base, 5), *bin_origem = decimal_para_binario(reg_origem, 5);
+            fprintf(arquivo_saida, "%s%s%s%s%s%s\n", bin11_5, bin_origem, bin_base, funct3, bin4_0, opcode);
+            free(bin11_5); free(bin4_0); free(bin_base); free(bin_origem);
             return;
         }
     }
-    
-    // Se nenhum dos 'if' acima conseguiu processar a linha, ela é inválida.
-    fprintf(stream_saida, "ERRO: Instrução '%s' não reconhecida ou formato inválido.\n", linha);
+
+    // Se não reconheceu, mostra erro simples
+    fprintf(arquivo_saida, "Linha não reconhecida: %s\n", linha_asm);
 }
 
-/*
- * Abre os arquivos de entrada e saída e lê o arquivo de entrada linha por linha.
- */
-int montar_arquivo(const char *input_file, const char *output_file) {
-    FILE *fin = fopen(input_file, "r");
-    if (!fin) {
-        printf("Erro ao abrir o arquivo de entrada '%s'.\n", input_file);
+// Lê o arquivo linha por linha e chama a montagem
+int montar_arquivo(const char *arquivo_entrada, const char *arquivo_saida) {
+    FILE *arquivo = fopen(arquivo_entrada, "r");
+    if (!arquivo) {
+        printf("Erro ao abrir o arquivo de entrada.\n");
         return 1;
     }
-
-    // Define o stream de saída: ou um arquivo, ou o terminal (stdout)
-    FILE *fout = output_file ? fopen(output_file, "w") : stdout;
-    if (!fout) {
-        printf("Erro ao criar o arquivo de saída '%s'.\n", output_file);
-        fclose(fin);
+    FILE *saida = arquivo_saida ? fopen(arquivo_saida, "w") : stdout;
+    if (!saida) {
+        printf("Erro ao abrir o arquivo de saída.\n");
+        fclose(arquivo);
         return 1;
     }
-
-    char linha[256];
-    while (fgets(linha, sizeof(linha), fin)) {
-        // Limpa a linha, removendo quebras de linha de Windows (\r\n) e Linux (\n)
-        linha[strcspn(linha, "\r\n")] = 0;
-        
-        // Avança o ponteiro para ignorar espaços/tabs no início da linha.
-        char* ptr = linha;
+    char linha_asm[256];
+    while (fgets(linha_asm, sizeof(linha_asm), arquivo)) {
+        linha_asm[strcspn(linha_asm, "\r\n")] = 0;
+        char* ptr = linha_asm;
         while(isspace((unsigned char)*ptr)) ptr++;
-        
-        // Pula o processamento de linhas vazias ou de comentário.
-        if(*ptr == '\0' || *ptr == '#') {
-            continue;
-        }
-        
-        // Envia a linha limpa para a função de processamento.
-        processar_linha(ptr, fout);
+        if(*ptr == '\0' || *ptr == '#') continue;
+        montar_linha(ptr, saida);
     }
-
-    fclose(fin);
-    if (fout != stdout) {
-        fclose(fout);
-    }
+    fclose(arquivo);
+    if (saida != stdout) fclose(saida);
     return 0;
 }
 
-// Comente a OPÇÃO 2
-// const char *input_file = "entrada.asm";
-// const char *output_file = "saida.txt";
-
-// Descomente a OPÇÃO 1 para imprimir no terminal
-const char *input_file = "entrada.asm";
-const char *output_file = NULL; // NULL significa "imprimir no terminal" 
