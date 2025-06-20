@@ -1,0 +1,16 @@
+CC=gcc
+CFLAGS=-Wall -Wextra -std=c99
+
+all: montador
+
+montador: main.o montador.o
+	$(CC) $(CFLAGS) -o montador main.o montador.o
+
+main.o: main.c montador.h
+	$(CC) $(CFLAGS) -c main.c
+
+montador.o: montador.c montador.h
+	$(CC) $(CFLAGS) -c montador.c
+
+clean:
+	rm -f *.o montador 
